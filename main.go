@@ -39,6 +39,7 @@ const PAGE_SIZE = 1000
 
 // CLI flags
 var Fetch bool
+var ShowStats bool
 var Until string
 var ConfigPath string
 
@@ -175,6 +176,15 @@ func FormatCommit(c Commit) string {
 		fmt.Fprintln(w, "   ", line)
 	}
 
+	if ShowStats && len(parents) == 1 {
+		stats, err := c.Commit.Stats()
+		if err != nil {
+			fmt.Println("Warn: failed to get stats", err)
+		} else {
+			fmt.Fprintln(w, stats)
+		}
+	}
+
 	out := strings.TrimSpace(w.String())
 	return fmt.Sprintf("%s\n", out)
 }
@@ -220,6 +230,7 @@ func Run(args []string) error {
 
 func main() {
 	rootCmd.PersistentFlags().BoolVar(&Fetch, "fetch", false, "")
+	rootCmd.PersistentFlags().BoolVar(&ShowStats, "stats", false, "")
 	rootCmd.PersistentFlags().StringVar(&Until, "until", "", "How far back should we go?  e.g. 2022-11-01  Default: 7 days ago")
 	rootCmd.PersistentFlags().StringVar(&ConfigPath, "config", "config.yaml", "")
 	if err := rootCmd.Execute(); err != nil {

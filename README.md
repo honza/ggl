@@ -40,6 +40,7 @@ Flags:
       --config string    (default "config.yaml")
       --fetch
   -h, --help            help for ggl
+      --stats
       --until string    How far back should we go?  e.g. 2022-11-01  Default: 7 days ago
 ```
 
