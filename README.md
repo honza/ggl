@@ -7,9 +7,8 @@ time.  The output is nearly identical to the default `git-log`.
 install
 -------
 
-```
-$ go install github.com/honza/ggl
-```
+TODO
+
 
 config
 ------
@@ -31,17 +30,19 @@ usage
 -----
 
 ```
-global git log
+ggl
 
-Usage:
-  ggl [flags]
+USAGE:
+    ggl [FLAGS] [OPTIONS]
 
-Flags:
-      --config string    (default "config.yaml")
-      --fetch
-  -h, --help            help for ggl
-      --stats
-      --until string    How far back should we go?  e.g. 2022-11-01  Default: 7 days ago
+FLAGS:
+    -f, --fetch      Run git fetch
+    -h, --help       Prints help information
+    -j, --json       Print JSON
+    -V, --version    Prints version information
+
+OPTIONS:
+    -u, --until <until>    How far into the past should we go?  e.g. 2022-12-31; defaults to one week ago
 ```
 
 license
