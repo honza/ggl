@@ -1,27 +1,47 @@
-use git2::Error;
-use git2::{Commit, DiffOptions, Time};
+use chrono;
+use colored::*;
+use git2::{DiffOptions, Error, Time};
 use serde::Deserialize;
 use std::fs;
-use std::path::Path;
+use std::ops::Sub;
+use std::path::{Path, PathBuf};
 use std::str;
 use structopt::StructOpt;
 
 #[derive(StructOpt)]
 struct Args {
-    #[structopt(name = "dir", long = "git-dir")]
-    /// alternative git directory to use
-    flag_git_dir: Option<String>,
+    #[structopt(name = "until", long, short)]
+    /// How far into the past should we go?  e.g. 2022-12-31; defaults to one week ago
+    until: Option<String>,
 
-    #[structopt(name = "max-count", short = "n", long)]
-    /// maximum number of commits to show
-    flag_max_count: Option<usize>,
+    #[structopt(name = "fetch", long, short)]
+    /// Run git fetch
+    fetch: bool,
 
-    #[structopt(name = "patch", long, short)]
-    /// show commit diff
-    flag_patch: bool,
+    #[structopt(name = "json", long, short)]
+    /// Print JSON
+    json: bool,
 }
 
 #[derive(Debug, Deserialize)]
+enum GglError {
+    ConfigParserError(String),
+    GitError(String),
+}
+
+impl From<Error> for GglError {
+    fn from(err: Error) -> Self {
+        GglError::GitError(err.message().to_owned())
+    }
+}
+
+impl From<serde_yaml::Error> for GglError {
+    fn from(err: serde_yaml::Error) -> Self {
+        GglError::ConfigParserError(format!("{}", err))
+    }
+}
+
+#[derive(Debug, PartialEq, Deserialize)]
 enum FilterType {
     Include,
     Reject,
@@ -50,34 +70,87 @@ struct Config {
 }
 
 #[derive(Debug)]
-struct GlobalCommit<'a> {
-    commit: Commit<'a>,
+struct GlobalCommit {
+    author: String,
+    date: Time,
+    message: String,
     repo_name: String,
-    changed_files: Vec<String>,
+    sha: String,
 }
 
-fn load_config() -> Result<Config, serde_yaml::Error> {
+fn load_config() -> Result<Config, GglError> {
     let contents = fs::read_to_string("config.yaml").unwrap();
-    serde_yaml::from_str(&contents)
+    // Not sure why we can't return:
+    //    serde_yaml::from_str(&contents)?;
+    match serde_yaml::from_str(&contents) {
+        Ok(c) => Ok(c),
+        Err(e) => Err(GglError::ConfigParserError(format!("{}", e))),
+    }
 }
 
-fn collect_commits(config: &Config, until: Time) -> Result<Vec<GlobalCommit>, Error> {
-    let commits: Vec<GlobalCommit> = vec![];
+fn git_fetch(repo: &git2::Repository, r: &Repository) -> Result<(), Error> {
+    if !r.fetch {
+        return Ok(());
+    }
+
+    println!("Fetching {} {}/{}", &r.name, &r.remote, &r.branch);
+    repo.find_remote(&r.remote)?.fetch(&[&r.branch], None, None)
+}
+
+fn should_be_included(filters: &Vec<Filter>, changed_files: &Vec<PathBuf>) -> bool {
+    for filter in filters {
+        for filter_path in &filter.paths {
+            for file in changed_files {
+                if file.to_str().unwrap().contains(filter_path) {
+                    match filter.filter_type {
+                        FilterType::Include => {
+                            return true;
+                        }
+                        FilterType::Reject => {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+fn collect_commits(
+    config: &Config,
+    fetch: bool,
+    until: Time,
+) -> Result<Vec<GlobalCommit>, GglError> {
+    let mut commits: Vec<GlobalCommit> = vec![];
     for r in &config.repositories {
         let repo_path = Path::new(&config.root).join(&r.path);
         let repo = git2::Repository::open(repo_path)?;
-        let c = collect_commits_for_repo(&repo, r.name.clone(), until);
-        println!("{:?}", c);
-        // TODO: sort by date
+
+        if fetch {
+            git_fetch(&repo, r)?;
+        }
+
+        let res = collect_commits_for_repo(repo, &r, until);
+        match res {
+            Ok(c) => {
+                commits.extend(c);
+            }
+            Err(e) => {
+                println!("{:?}", e);
+            }
+        }
     }
+    commits.sort_by_key(|commit| commit.date);
+    commits.reverse();
     Ok(commits)
 }
 
 fn collect_commits_for_repo(
-    repo: &git2::Repository,
-    repo_name: String,
+    repo: git2::Repository,
+    r: &Repository,
     until: Time,
-) -> Result<Vec<GlobalCommit>, Error> {
+) -> Result<Vec<GlobalCommit>, GglError> {
     let mut commits: Vec<GlobalCommit> = vec![];
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
@@ -86,36 +159,39 @@ fn collect_commits_for_repo(
     for id in revwalk {
         let id = id?;
         let commit = repo.find_commit(id)?;
-
         let commit_date = commit.author().when();
-        println!("{:?}", until);
-        print_time(&until, "");
-        print_time(&commit_date, "");
 
         if commit_date < until {
             break;
         }
 
-        let a = if commit.parents().len() == 1 {
-            let parent = commit.parent(0)?;
-            Some(parent.tree()?)
-        } else {
-            None
-        };
-        let b = commit.tree()?;
-        let diff = repo.diff_tree_to_tree(a.as_ref(), Some(&b), Some(&mut diffopts))?;
+        if let Some(filters) = &r.filters {
+            let mut changed_files: Vec<PathBuf> = vec![];
+            let a = if commit.parents().len() == 1 {
+                let parent = commit.parent(0)?;
+                Some(parent.tree()?)
+            } else {
+                None
+            };
+            let b = commit.tree()?;
+            let diff = repo.diff_tree_to_tree(a.as_ref(), Some(&b), Some(&mut diffopts))?;
 
-        let mut changed_files: Vec<String> = vec![];
+            for delta in diff.deltas() {
+                let new_file = delta.new_file();
+                changed_files.push(new_file.path().unwrap().to_owned());
+            }
 
-        for delta in diff.deltas() {
-            let new_file = delta.new_file();
-            changed_files.push(new_file.path().unwrap().to_str().unwrap().to_owned());
+            if !should_be_included(&filters, &changed_files) {
+                continue;
+            }
         }
 
         let global_commit = GlobalCommit {
-            commit: commit,
-            repo_name: repo_name.clone(),
-            changed_files: changed_files,
+            author: commit.author().name().unwrap().to_string(),
+            date: commit.author().when(),
+            message: commit.message().unwrap().to_string(),
+            sha: commit.id().to_string(),
+            repo_name: r.name.clone(),
         };
 
         commits.push(global_commit);
@@ -124,35 +200,18 @@ fn collect_commits_for_repo(
     Ok(commits)
 }
 
-fn run(_args: &Args) -> Result<(), Error> {
-    let config = load_config().unwrap();
-    println!("{:?}", config);
-
-    let until = Time::new(1667500000, 0);
-    collect_commits(&config, until)?;
-
-    Ok(())
-}
-
-fn print_commit(commit: &Commit) {
-    println!("commit {}", commit.id());
-
-    if commit.parents().len() > 1 {
-        print!("Merge:");
-        for id in commit.parent_ids() {
-            print!(" {:.8}", id);
-        }
-        println!();
-    }
-
-    let author = commit.author();
-    println!("Author: {}", author);
-    print_time(&author.when(), "Date:   ");
+fn print_global_commit(commit: &GlobalCommit) {
+    let commit_line = format!("commit {}", commit.sha);
+    println!("{}", commit_line.yellow());
+    println!("Repo:   {}", commit.repo_name);
+    println!("Author: {}", commit.author);
+    print_time(&commit.date, "Date:   ");
     println!();
 
-    for line in String::from_utf8_lossy(commit.message_bytes()).lines() {
+    for line in commit.message.lines() {
         println!("    {}", line);
     }
+
     println!();
 }
 
@@ -175,10 +234,33 @@ fn print_time(time: &Time, prefix: &str) {
     );
 }
 
+fn get_until(arg: &Option<String>) -> i64 {
+    let date = match arg {
+        Some(date) => chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+        None => chrono::Local::now()
+            .date_naive()
+            .sub(chrono::Duration::weeks(1)),
+    };
+
+    date.and_hms_opt(0, 0, 0).unwrap().timestamp()
+}
+
+fn run(args: &Args) -> Result<(), GglError> {
+    let config = load_config()?;
+    let until = Time::new(get_until(&args.until), 0);
+    let commits = collect_commits(&config, args.fetch, until)?;
+
+    for commit in commits {
+        print_global_commit(&commit);
+    }
+
+    Ok(())
+}
+
 fn main() {
     let args = Args::from_args();
     match run(&args) {
         Ok(()) => {}
-        Err(e) => println!("error: {}", e),
+        Err(e) => println!("error: {:?}", e),
     }
 }
