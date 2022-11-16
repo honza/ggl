@@ -159,15 +159,8 @@ fn collect_commits(
                 git_fetch(&repo, r)?;
             }
 
-            let res = collect_commits_for_repo(repo, &r, until);
-            match res {
-                Ok(c) => {
-                    commits.extend(c);
-                }
-                Err(e) => {
-                    println!("{:?}", e);
-                }
-            }
+            let res = collect_commits_for_repo(repo, &r, until)?;
+            commits.extend(res);
         }
     }
     commits.sort_by_key(|commit| commit.date);
