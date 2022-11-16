@@ -270,19 +270,27 @@ fn get_until(arg: &Option<String>) -> i64 {
 //   2.  $XDG_CONFIG_HOME/ggl.yaml
 //   3.  config.yaml in the current directory
 fn get_config_path(arg_config: Option<PathBuf>) -> Result<PathBuf, GglError> {
-    let path = match arg_config {
-        Some(pb) => pb,
-        None => match dirs::config_dir() {
-            Some(pb) => pb.join("ggl.yaml").to_path_buf(),
-            None => PathBuf::from("config.yaml"),
-        },
-    };
-
-    if !path.exists() {
-        return Err(GglError::MissingConfigFile);
+    if let Some(path) = arg_config {
+        if path.exists() {
+            return Ok(path);
+        } else {
+            return Err(GglError::MissingConfigFile);
+        }
     }
 
-    Ok(path)
+    if let Some(path) = dirs::config_dir() {
+        let full_path = path.join("ggl.yaml").to_path_buf();
+        if full_path.exists() {
+            return Ok(full_path);
+        }
+    }
+
+    let local_file = PathBuf::from("config.yaml");
+    if local_file.exists() {
+        return Ok(local_file);
+    }
+
+    return Err(GglError::MissingConfigFile);
 }
 
 fn run(args: &Args) -> Result<(), GglError> {
