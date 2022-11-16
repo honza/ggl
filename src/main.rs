@@ -270,6 +270,7 @@ fn get_until(arg: &Option<String>) -> i64 {
 // Look for a config file in the following places in the following order:
 //   1.  --config flag
 //   2.  $XDG_CONFIG_HOME/ggl.yaml
+//   3.  config.yaml in the current directory
 fn get_config_path(arg_config: Option<PathBuf>) -> Result<PathBuf, GglError> {
     let path = match arg_config {
         Some(pb) => pb,

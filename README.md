@@ -7,6 +7,12 @@ time.  The output is nearly identical to the default `git-log`.
 install
 -------
 
+### cargo
+
+``` sh
+$ cargo install ggl
+```
+
 ### from source
 
 ``` sh
@@ -32,8 +38,11 @@ repositories:
     fetch: true
 ```
 
-`ggl` will look for the config file in `$XDG_CONFIG_HOME/ggl.yaml`, or you can
-pass it with the `--config` flag.
+`ggl` will look for the config file in the following places:
+
+1.  `--config` flag
+2.  `$XDG_CONFIG_HOME/ggl.yaml`
+3.  `config.yaml` in the current directory
 
 usage
 -----
