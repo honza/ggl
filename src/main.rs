@@ -25,7 +25,9 @@ use structopt::StructOpt;
 use time;
 
 // git format: Wed Nov 16 11:05:18 2022 -0400
-static DATETIME: &str = "[weekday repr:short] [month repr:short] [day padding:none] [hour]:[minute]:[second] [year] [offset_hour sign:mandatory][offset_minute]";
+static DATETIME: &str = "[weekday repr:short] [month repr:short] \
+                         [day padding:none] [hour]:[minute]:[second] \
+                         [year] [offset_hour sign:mandatory][offset_minute]";
 
 #[derive(StructOpt)]
 struct Args {
