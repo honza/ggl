@@ -43,6 +43,10 @@ struct Args {
     /// Print JSON
     json: bool,
 
+    #[structopt(name = "reverse", long, short)]
+    /// Reverse the result
+    reverse: bool,
+
     #[structopt(name = "config", long, short)]
     /// Path to config file
     config: Option<PathBuf>,
@@ -316,7 +320,11 @@ fn run(args: &Args) -> Result<(), GglError> {
     let config_path = get_config_path(args.config.clone())?;
     let config = load_config(config_path)?;
     let until = git2::Time::new(get_until(&args.until), 0);
-    let commits = collect_commits(&config, args.fetch, until)?;
+    let mut commits = collect_commits(&config, args.fetch, until)?;
+
+    if args.reverse {
+        commits.reverse();
+    }
 
     if args.json {
         print_json(commits);

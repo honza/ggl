@@ -58,6 +58,7 @@ FLAGS:
     -f, --fetch      Run git fetch
     -h, --help       Prints help information
     -j, --json       Print JSON
+    -r, --reverse    Reverse the result
     -V, --version    Prints version information
 
 OPTIONS:
