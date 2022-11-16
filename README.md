@@ -7,8 +7,14 @@ time.  The output is nearly identical to the default `git-log`.
 install
 -------
 
-TODO
+### from source
 
+``` sh
+$ git clone https://github.com/honza/ggl
+$ cd ggl
+$ cargo build --release
+$ ./target/release/ggl --help
+```
 
 config
 ------
@@ -26,6 +32,9 @@ repositories:
     fetch: true
 ```
 
+`ggl` will look for the config file in `$XDG_CONFIG_HOME/ggl.yaml`, or you can
+pass it with the `--config` flag.
+
 usage
 -----
 
@@ -42,7 +51,8 @@ FLAGS:
     -V, --version    Prints version information
 
 OPTIONS:
-    -u, --until <until>    How far into the past should we go?  e.g. 2022-12-31; defaults to one week ago
+    -c, --config <config>    Path to config file
+    -u, --until <until>      How far into the past should we go?  e.g. 2022-12-31; defaults to one week ago
 ```
 
 license

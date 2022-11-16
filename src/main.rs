@@ -1,6 +1,23 @@
+// ggl --- global git log
+// Copyright (C) 2022  Honza Pokorny <honza@pokorny.ca>
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use chrono;
 use colored::*;
-use git2::{DiffOptions, Error, Time};
+use dirs;
+use git2;
 use serde::Deserialize;
 use std::fs;
 use std::ops::Sub;
@@ -21,16 +38,21 @@ struct Args {
     #[structopt(name = "json", long, short)]
     /// Print JSON
     json: bool,
+
+    #[structopt(name = "config", long, short)]
+    /// Path to config file
+    config: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
 enum GglError {
     ConfigParserError(String),
     GitError(String),
+    MissingConfigFile,
 }
 
-impl From<Error> for GglError {
-    fn from(err: Error) -> Self {
+impl From<git2::Error> for GglError {
+    fn from(err: git2::Error) -> Self {
         GglError::GitError(err.message().to_owned())
     }
 }
@@ -72,15 +94,15 @@ struct Config {
 #[derive(Debug)]
 struct GlobalCommit {
     author: String,
-    date: Time,
+    date: git2::Time,
     message: String,
     repo_name: String,
     sha: String,
 }
 
-fn load_config() -> Result<Config, GglError> {
-    let contents = fs::read_to_string("config.yaml").unwrap();
-    // Not sure why we can't return:
+fn load_config(path: PathBuf) -> Result<Config, GglError> {
+    let contents = fs::read_to_string(path).unwrap();
+    // TODO: Not sure why we can't return:
     //    serde_yaml::from_str(&contents)?;
     match serde_yaml::from_str(&contents) {
         Ok(c) => Ok(c),
@@ -88,7 +110,7 @@ fn load_config() -> Result<Config, GglError> {
     }
 }
 
-fn git_fetch(repo: &git2::Repository, r: &Repository) -> Result<(), Error> {
+fn git_fetch(repo: &git2::Repository, r: &Repository) -> Result<(), git2::Error> {
     if !r.fetch {
         return Ok(());
     }
@@ -120,7 +142,7 @@ fn should_be_included(filters: &Vec<Filter>, changed_files: &Vec<PathBuf>) -> bo
 fn collect_commits(
     config: &Config,
     fetch: bool,
-    until: Time,
+    until: git2::Time,
 ) -> Result<Vec<GlobalCommit>, GglError> {
     let mut commits: Vec<GlobalCommit> = vec![];
     for r in &config.repositories {
@@ -149,12 +171,12 @@ fn collect_commits(
 fn collect_commits_for_repo(
     repo: git2::Repository,
     r: &Repository,
-    until: Time,
+    until: git2::Time,
 ) -> Result<Vec<GlobalCommit>, GglError> {
     let mut commits: Vec<GlobalCommit> = vec![];
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
-    let mut diffopts = DiffOptions::new();
+    let mut diffopts = git2::DiffOptions::new();
 
     for id in revwalk {
         let id = id?;
@@ -215,7 +237,7 @@ fn print_global_commit(commit: &GlobalCommit) {
     println!();
 }
 
-fn print_time(time: &Time, prefix: &str) {
+fn print_time(time: &git2::Time, prefix: &str) {
     let (offset, sign) = match time.offset_minutes() {
         n if n < 0 => (-n, '-'),
         n => (n, '+'),
@@ -245,9 +267,29 @@ fn get_until(arg: &Option<String>) -> i64 {
     date.and_hms_opt(0, 0, 0).unwrap().timestamp()
 }
 
+// Look for a config file in the following places in the following order:
+//   1.  --config flag
+//   2.  $XDG_CONFIG_HOME/ggl.yaml
+fn get_config_path(arg_config: Option<PathBuf>) -> Result<PathBuf, GglError> {
+    let path = match arg_config {
+        Some(pb) => pb,
+        None => match dirs::config_dir() {
+            Some(pb) => pb.join("ggl.yaml").to_path_buf(),
+            None => PathBuf::from("config.yaml"),
+        },
+    };
+
+    if !path.exists() {
+        return Err(GglError::MissingConfigFile);
+    }
+
+    Ok(path)
+}
+
 fn run(args: &Args) -> Result<(), GglError> {
-    let config = load_config()?;
-    let until = Time::new(get_until(&args.until), 0);
+    let config_path = get_config_path(args.config.clone())?;
+    let config = load_config(config_path)?;
+    let until = git2::Time::new(get_until(&args.until), 0);
     let commits = collect_commits(&config, args.fetch, until)?;
 
     for commit in commits {
