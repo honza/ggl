@@ -105,6 +105,8 @@ struct GlobalCommit {
     sha: String,
 }
 
+type CommitResult = Result<Vec<GlobalCommit>, GglError>;
+
 fn load_config(path: PathBuf) -> Result<Config, GglError> {
     let contents = fs::read_to_string(path).unwrap();
     // TODO: Not sure why we can't return:
@@ -144,11 +146,7 @@ fn should_be_included(filters: &Vec<Filter>, changed_files: &Vec<PathBuf>) -> bo
     false
 }
 
-fn collect_commits(
-    config: &Config,
-    fetch: bool,
-    until: git2::Time,
-) -> Result<Vec<GlobalCommit>, GglError> {
+fn collect_commits(config: &Config, fetch: bool, until: git2::Time) -> CommitResult {
     let mut commits: Vec<GlobalCommit> = vec![];
     for block in &config.blocks {
         for r in &block.repositories {
@@ -172,7 +170,7 @@ fn collect_commits_for_repo(
     repo: git2::Repository,
     r: &Repository,
     until: git2::Time,
-) -> Result<Vec<GlobalCommit>, GglError> {
+) -> CommitResult {
     let mut commits: Vec<GlobalCommit> = vec![];
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
