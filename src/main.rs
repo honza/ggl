@@ -86,9 +86,14 @@ struct Repository {
 }
 
 #[derive(Debug, Deserialize)]
-struct Config {
+struct Block {
     root: String,
     repositories: Vec<Repository>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Config {
+    blocks: Vec<Block>,
 }
 
 #[derive(Debug)]
@@ -145,21 +150,23 @@ fn collect_commits(
     until: git2::Time,
 ) -> Result<Vec<GlobalCommit>, GglError> {
     let mut commits: Vec<GlobalCommit> = vec![];
-    for r in &config.repositories {
-        let repo_path = Path::new(&config.root).join(&r.path);
-        let repo = git2::Repository::open(repo_path)?;
+    for block in &config.blocks {
+        for r in &block.repositories {
+            let repo_path = Path::new(&block.root).join(&r.path);
+            let repo = git2::Repository::open(repo_path)?;
 
-        if fetch {
-            git_fetch(&repo, r)?;
-        }
-
-        let res = collect_commits_for_repo(repo, &r, until);
-        match res {
-            Ok(c) => {
-                commits.extend(c);
+            if fetch {
+                git_fetch(&repo, r)?;
             }
-            Err(e) => {
-                println!("{:?}", e);
+
+            let res = collect_commits_for_repo(repo, &r, until);
+            match res {
+                Ok(c) => {
+                    commits.extend(c);
+                }
+                Err(e) => {
+                    println!("{:?}", e);
+                }
             }
         }
     }

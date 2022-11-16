@@ -29,13 +29,14 @@ A yaml file which specifies which repositories you want to include, and their
 respective remotes and branches.
 
 ``` yaml
-root: /home/abc/code
-repositories:
-  - name: "linux"
-    path: "linux"
-    remote: "upstream"
-    branch: "master"
-    fetch: true
+blocks:
+- root: /home/abc/code
+  repositories:
+    - name: "linux"
+      path: "linux"
+      remote: "upstream"
+      branch: "master"
+      fetch: true
 ```
 
 `ggl` will look for the config file in the following places:
