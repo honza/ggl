@@ -274,10 +274,10 @@ fn get_until(arg: &Option<String>) -> i64 {
                 .assume_offset(offset)
                 .unix_timestamp()
         }
-        None => {
-            let now = time::OffsetDateTime::now_local().unwrap();
-            now.unix_timestamp()
-        }
+        None => time::OffsetDateTime::now_local()
+            .unwrap()
+            .saturating_sub(time::Duration::days(7))
+            .unix_timestamp(),
     }
 }
 
