@@ -14,16 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use chrono;
 use colored::*;
 use dirs;
 use git2;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
-use std::ops::Sub;
 use std::path::{Path, PathBuf};
 use std::str;
 use structopt::StructOpt;
+use time;
+
+// git format: Wed Nov 16 11:05:18 2022 -0400
+static DATETIME: &str = "[weekday repr:short] [month repr:short] [day padding:none] [hour]:[minute]:[second] [year] [offset_hour sign:mandatory][offset_minute]";
 
 #[derive(StructOpt)]
 struct Args {
@@ -96,10 +98,10 @@ struct Config {
     blocks: Vec<Block>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct GlobalCommit {
     author: String,
-    date: git2::Time,
+    date: time::OffsetDateTime,
     message: String,
     repo_name: String,
     sha: String,
@@ -208,7 +210,7 @@ fn collect_commits_for_repo(
 
         let global_commit = GlobalCommit {
             author: commit.author().name().unwrap().to_string(),
-            date: commit.author().when(),
+            date: git_time_to_datetime(&commit.author().when())?,
             message: commit.message().unwrap().to_string(),
             sha: commit.id().to_string(),
             repo_name: r.name.clone(),
@@ -225,7 +227,7 @@ fn print_global_commit(commit: &GlobalCommit) {
     println!("{}", commit_line.yellow());
     println!("Repo:   {}", commit.repo_name);
     println!("Author: {}", commit.author);
-    print_time(&commit.date, "Date:   ");
+    print_time(&commit.date);
     println!();
 
     for line in commit.message.lines() {
@@ -235,34 +237,42 @@ fn print_global_commit(commit: &GlobalCommit) {
     println!();
 }
 
-fn print_time(time: &git2::Time, prefix: &str) {
-    let (offset, sign) = match time.offset_minutes() {
-        n if n < 0 => (-n, '-'),
-        n => (n, '+'),
-    };
-    let (hours, minutes) = (offset / 60, offset % 60);
-    let ts = time::Timespec::new(time.seconds() + (time.offset_minutes() as i64) * 60, 0);
-    let time = time::at(ts);
+fn git_time_to_datetime(time: &git2::Time) -> Result<time::OffsetDateTime, GglError> {
+    let off = time::UtcOffset::from_whole_seconds(time.offset_minutes() * 60).unwrap();
 
-    println!(
-        "{}{} {}{:02}{:02}",
-        prefix,
-        time.strftime("%a %b %e %T %Y").unwrap(),
-        sign,
-        hours,
-        minutes
-    );
+    let ts = time::OffsetDateTime::from_unix_timestamp(
+        time.seconds() + (time.offset_minutes() as i64) * 60,
+    )
+    .unwrap()
+    .replace_offset(off);
+
+    Ok(ts)
+}
+
+fn print_time(t: &time::OffsetDateTime) {
+    // Not sure how to do a global const that reqires a function call
+    let f = time::format_description::parse(DATETIME).unwrap();
+    let s = t.format(&f).unwrap();
+    println!("Date:   {}", s);
 }
 
 fn get_until(arg: &Option<String>) -> i64 {
-    let date = match arg {
-        Some(date) => chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
-        None => chrono::Local::now()
-            .date_naive()
-            .sub(chrono::Duration::weeks(1)),
-    };
-
-    date.and_hms_opt(0, 0, 0).unwrap().timestamp()
+    match arg {
+        Some(date) => {
+            let format = time::macros::format_description!("[year]-[month]-[day]");
+            let offset = time::UtcOffset::current_local_offset().unwrap();
+            time::Date::parse(date, &format)
+                .unwrap()
+                .with_hms(0, 0, 0)
+                .unwrap()
+                .assume_offset(offset)
+                .unix_timestamp()
+        }
+        None => {
+            let now = time::OffsetDateTime::now_local().unwrap();
+            now.unix_timestamp()
+        }
+    }
 }
 
 // Look for a config file in the following places in the following order:
@@ -293,14 +303,25 @@ fn get_config_path(arg_config: Option<PathBuf>) -> Result<PathBuf, GglError> {
     return Err(GglError::MissingConfigFile);
 }
 
+fn print_json(commits: Vec<GlobalCommit>) {
+    match serde_json::to_string(&commits) {
+        Ok(c) => println!("{}", c),
+        Err(_) => println!("Errror"),
+    }
+}
+
 fn run(args: &Args) -> Result<(), GglError> {
     let config_path = get_config_path(args.config.clone())?;
     let config = load_config(config_path)?;
     let until = git2::Time::new(get_until(&args.until), 0);
     let commits = collect_commits(&config, args.fetch, until)?;
 
-    for commit in commits {
-        print_global_commit(&commit);
+    if args.json {
+        print_json(commits);
+    } else {
+        for commit in commits {
+            print_global_commit(&commit);
+        }
     }
 
     Ok(())
