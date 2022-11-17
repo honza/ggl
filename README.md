@@ -42,6 +42,12 @@ config
 A yaml file which specifies which repositories you want to include, and their
 respective remotes and branches.
 
+A `block` is a collection of repositories that share a common root directory.
+When running `git fetch` we use the `remote` and `branch` information.
+
+By default, we don't run `git fetch`: you have to pass in the `--fetch` flag.
+If you never wish to fetch a repo, you can say so in the config.
+
 ``` yaml
 blocks:
 - root: /home/abc/code
