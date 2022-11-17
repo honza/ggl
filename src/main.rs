@@ -104,7 +104,7 @@ struct Config {
     blocks: Vec<Block>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct GlobalCommit {
     author: String,
     date: time::OffsetDateTime,
@@ -113,7 +113,32 @@ struct GlobalCommit {
     sha: String,
 }
 
-type CommitResult = Result<Vec<GlobalCommit>, GglError>;
+/// A CommitSet represents a unit of change to a repo.  It's either:
+///
+/// 1.  A single commit committed to your selected branch
+/// 2.  One or more commits introduced to your branch by a merge commit
+///
+/// The purpose of this tool is to find commits that broke things.
+///
+/// Here is how we create these sets:
+///
+/// For every repository, we walk in topological order.
+///
+/// If we see a commit that isn't a merge, we create a set with a single item.
+/// The date is the date of that commit.
+///
+/// If we see a commit that is a merge, we collect commits until we hit the
+/// SHA of the first parent of that commit.  The date is the date of the
+/// merge commit.
+///
+/// These CommitSets can then be sorted by date, and printed.
+#[derive(Debug)]
+struct CommitSet {
+    date: time::OffsetDateTime,
+    commits: Vec<GlobalCommit>,
+}
+
+type CommitSetResult = Result<Vec<CommitSet>, GglError>;
 
 fn load_config(path: PathBuf) -> Result<Config, GglError> {
     let contents = fs::read_to_string(path).unwrap();
@@ -135,6 +160,9 @@ fn git_fetch(repo: &git2::Repository, r: &Repository) -> Result<(), git2::Error>
 }
 
 fn should_be_included(filters: &Vec<Filter>, changed_files: &Vec<PathBuf>) -> bool {
+    if filters.len() == 0 {
+        return true;
+    }
     for filter in filters {
         for filter_path in &filter.paths {
             for file in changed_files {
@@ -150,12 +178,24 @@ fn should_be_included(filters: &Vec<Filter>, changed_files: &Vec<PathBuf>) -> bo
                 }
             }
         }
+
+        // If we didn't find a match above
+        match filter.filter_type {
+            FilterType::Include => {
+                return false;
+            }
+            FilterType::Reject => {
+                return true;
+            }
+        }
     }
-    false
+
+    // This should never happen :)
+    true
 }
 
-fn collect_commits(config: &Config, fetch: bool, until: git2::Time) -> CommitResult {
-    let mut commits: Vec<GlobalCommit> = vec![];
+fn collect_commitsets(config: &Config, fetch: bool, until: git2::Time) -> CommitSetResult {
+    let mut commitsets: Vec<CommitSet> = vec![];
     for block in &config.blocks {
         for r in &block.repositories {
             let repo_path = Path::new(&block.root).join(&r.path);
@@ -165,24 +205,30 @@ fn collect_commits(config: &Config, fetch: bool, until: git2::Time) -> CommitRes
                 git_fetch(&repo, r)?;
             }
 
-            let res = collect_commits_for_repo(repo, &r, until)?;
-            commits.extend(res);
+            let sets = collect_commitsets_for_repo(repo, &r, until)?;
+            commitsets.extend(sets);
         }
     }
-    commits.sort_by_key(|commit| commit.date);
-    commits.reverse();
-    Ok(commits)
+    commitsets.sort_by_key(|set| set.date);
+    commitsets.reverse();
+    Ok(commitsets)
 }
 
-fn collect_commits_for_repo(
+fn collect_commitsets_for_repo(
     repo: git2::Repository,
     r: &Repository,
     until: git2::Time,
-) -> CommitResult {
-    let mut commits: Vec<GlobalCommit> = vec![];
+) -> CommitSetResult {
+    let mut commitsets: Vec<CommitSet> = vec![];
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
+    revwalk.set_sorting(git2::Sort::TOPOLOGICAL)?;
     let mut diffopts = git2::DiffOptions::new();
+
+    let mut commit_buffer: Vec<GlobalCommit> = vec![];
+    let mut collecting_commits = false;
+    let mut set_date: time::OffsetDateTime = time::OffsetDateTime::now_utc();
+    let mut destination_commit_id: git2::Oid = git2::Oid::zero();
 
     for id in revwalk {
         let id = id?;
@@ -193,39 +239,90 @@ fn collect_commits_for_repo(
             break;
         }
 
-        if let Some(filters) = &r.filters {
-            let mut changed_files: Vec<PathBuf> = vec![];
-            let a = if commit.parents().len() == 1 {
-                let parent = commit.parent(0)?;
-                Some(parent.tree()?)
-            } else {
-                None
-            };
-            let b = commit.tree()?;
-            let diff = repo.diff_tree_to_tree(a.as_ref(), Some(&b), Some(&mut diffopts))?;
+        let is_merge = commit.parent_count() > 1;
 
-            for delta in diff.deltas() {
-                let new_file = delta.new_file();
-                changed_files.push(new_file.path().unwrap().to_owned());
-            }
+        if !is_merge {
+            if let Some(filters) = &r.filters {
+                let mut changed_files: Vec<PathBuf> = vec![];
+                let current_tree = commit.tree()?;
 
-            if !should_be_included(&filters, &changed_files) {
-                continue;
+                let parent_tree = if commit.parent_count() == 1 {
+                    Some(commit.parent(0)?.tree()?)
+                } else {
+                    None
+                };
+
+                let diff = repo.diff_tree_to_tree(
+                    parent_tree.as_ref(),
+                    Some(&current_tree),
+                    Some(&mut diffopts),
+                )?;
+
+                for delta in diff.deltas() {
+                    let new_file = delta.new_file();
+                    changed_files.push(new_file.path().unwrap().to_owned());
+                }
+
+                if !should_be_included(filters, &changed_files) {
+                    continue;
+                }
             }
         }
 
+        if collecting_commits && commit.id() == destination_commit_id {
+            let set = CommitSet {
+                date: set_date,
+                commits: commit_buffer.clone(),
+            };
+
+            // reset
+            commit_buffer.clear();
+            collecting_commits = false;
+            commitsets.push(set);
+        }
+
+        let commit_date = git_time_to_datetime(&commit.author().when())?;
+
         let global_commit = GlobalCommit {
             author: commit.author().name().unwrap().to_string(),
-            date: git_time_to_datetime(&commit.author().when())?,
+            date: commit_date.clone(),
             message: commit.message().unwrap().to_string(),
             sha: commit.id().to_string(),
             repo_name: r.name.clone(),
         };
 
-        commits.push(global_commit);
+        if is_merge {
+            set_date = commit_date.clone();
+            collecting_commits = true;
+            destination_commit_id = commit.parent(0)?.id();
+
+            commit_buffer.push(global_commit);
+        } else {
+            if collecting_commits {
+                commit_buffer.push(global_commit);
+                continue;
+            }
+
+            let set = CommitSet {
+                date: commit_date,
+                commits: vec![global_commit],
+            };
+
+            commitsets.push(set);
+        }
     }
 
-    Ok(commits)
+    Ok(commitsets)
+}
+
+fn print_commit_set(set: &mut CommitSet, reverse: bool) {
+    if reverse {
+        set.commits.reverse();
+    }
+
+    for commit in &set.commits {
+        print_global_commit(commit);
+    }
 }
 
 fn print_global_commit(commit: &GlobalCommit) {
@@ -309,7 +406,8 @@ fn get_config_path(arg_config: Option<PathBuf>) -> Result<PathBuf, GglError> {
     return Err(GglError::MissingConfigFile);
 }
 
-fn print_json(commits: Vec<GlobalCommit>) {
+fn print_json(sets: Vec<CommitSet>) {
+    let commits: Vec<GlobalCommit> = sets.iter().flat_map(|set| set.commits.clone()).collect();
     match serde_json::to_string(&commits) {
         Ok(c) => println!("{}", c),
         Err(_) => println!("Errror"),
@@ -320,17 +418,17 @@ fn run(args: &Args) -> Result<(), GglError> {
     let config_path = get_config_path(args.config.clone())?;
     let config = load_config(config_path)?;
     let until = git2::Time::new(get_until(&args.until), 0);
-    let mut commits = collect_commits(&config, args.fetch, until)?;
+    let mut commitsets = collect_commitsets(&config, args.fetch, until)?;
 
     if args.reverse {
-        commits.reverse();
+        commitsets.reverse();
     }
 
     if args.json {
-        print_json(commits);
+        print_json(commitsets);
     } else {
-        for commit in commits {
-            print_global_commit(&commit);
+        for set in commitsets.iter_mut() {
+            print_commit_set(set, args.reverse);
         }
     }
 
