@@ -4,6 +4,20 @@ ggl --- global git log
 This tool shows you a log of git commits from multiple repositories ordered by
 time.  The output is nearly identical to the default `git-log`.
 
+features
+--------
+
+The goal of this tool is to discover a commit that broke things, and as such, we
+use `--topo-order` when presenting the results.  This means that a merge commit
+is followed by all of its children before other commits are shown.
+
+You can ask `ggl` to run `git fetch` for you.
+
+You can specify which paths you care about in busy repository with filters.
+
+By default, we go 1 week into the past, and of course you can set your own
+value.
+
 install
 -------
 
@@ -37,6 +51,10 @@ blocks:
       remote: "upstream"
       branch: "master"
       fetch: true
+      filters:
+        - filter_type: Include
+          paths:
+            - src/important-file.txt
 ```
 
 `ggl` will look for the config file in the following places:
