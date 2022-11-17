@@ -406,11 +406,21 @@ fn get_config_path(arg_config: Option<PathBuf>) -> Result<PathBuf, GglError> {
     return Err(GglError::MissingConfigFile);
 }
 
-fn print_json(sets: Vec<CommitSet>) {
-    let commits: Vec<GlobalCommit> = sets.iter().flat_map(|set| set.commits.clone()).collect();
+fn print_json(sets: &mut Vec<CommitSet>, reverse: bool) {
+    let mut commits: Vec<&GlobalCommit> = vec![];
+
+    for set in sets {
+        if reverse {
+            set.commits.reverse();
+        }
+        for commit in &set.commits {
+            commits.push(commit);
+        }
+    }
+
     match serde_json::to_string(&commits) {
         Ok(c) => println!("{}", c),
-        Err(_) => println!("Errror"),
+        Err(e) => println!("Errror {:?}", e),
     }
 }
 
@@ -425,7 +435,7 @@ fn run(args: &Args) -> Result<(), GglError> {
     }
 
     if args.json {
-        print_json(commitsets);
+        print_json(&mut commitsets, args.reverse);
     } else {
         for set in commitsets.iter_mut() {
             print_commit_set(set, args.reverse);
