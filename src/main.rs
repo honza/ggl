@@ -221,7 +221,8 @@ fn collect_commitsets_for_repo(
 ) -> CommitSetResult {
     let mut commitsets: Vec<CommitSet> = vec![];
     let mut revwalk = repo.revwalk()?;
-    revwalk.push_head()?;
+    let git_ref = format!("refs/remotes/{}/{}", r.remote, r.branch);
+    revwalk.push_ref(&git_ref)?;
     revwalk.set_sorting(git2::Sort::TOPOLOGICAL)?;
     let mut diffopts = git2::DiffOptions::new();
 
