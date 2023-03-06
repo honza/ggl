@@ -236,11 +236,18 @@ fn collect_commitsets_for_repo(
         let commit = repo.find_commit(id)?;
         let commit_date = commit.author().when();
 
-        if commit_date < until {
+        let is_merge = commit.parent_count() > 1;
+
+        // Any merge older than `until' should immediately terminate the loop.`
+        if is_merge && commit_date < until {
+            let set = CommitSet {
+                date: set_date,
+                commits: commit_buffer.clone(),
+            };
+
+            commitsets.push(set);
             break;
         }
-
-        let is_merge = commit.parent_count() > 1;
 
         if !is_merge {
             if let Some(filters) = &r.filters {
