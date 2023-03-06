@@ -249,6 +249,13 @@ fn collect_commitsets_for_repo(
             break;
         }
 
+        // In trunk-based repos (i.e. no PR merges, or flat history), we need to check non-merges, too.
+        if !is_merge && !collecting_commits {
+            if commit_date < until {
+                break;
+            }
+        }
+
         if !is_merge {
             if let Some(filters) = &r.filters {
                 let mut changed_files: Vec<PathBuf> = vec![];
